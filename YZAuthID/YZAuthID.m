@@ -11,9 +11,17 @@
 #import "YZAuthID.h"
 #import <UIKit/UIKit.h>
 
-#define iPhoneX (UIScreen.mainScreen.bounds.size.width >= 375.f && UIScreen.mainScreen.bounds.size.height >= 812.f)
-
 @implementation YZAuthID
+
+/// 机型
+#define isPhoneX ({\
+    BOOL isBangsScreen = NO; \
+    if (@available(iOS 11.0, *)) { \
+    UIWindow *window = [[UIApplication sharedApplication].windows firstObject]; \
+    isBangsScreen = window.safeAreaInsets.bottom > 0; \
+    } \
+    isBangsScreen; \
+})
 
 + (instancetype)sharedInstance {
     static YZAuthID *instance = nil;
@@ -25,43 +33,40 @@
 }
 
 - (void)yz_showAuthIDWithDescribe:(NSString *)describe block:(YZAuthIDStateBlock)block {
-    if(!describe) {
-        if(iPhoneX){
-            describe = @"验证已有面容";
-        }else{
-            describe = @"通过Home键验证已有指纹";
-        }
-    }
-    
     if (NSFoundationVersionNumber < NSFoundationVersionNumber_iOS_8_0) {
         
         dispatch_async(dispatch_get_main_queue(), ^{
-            NSLog(@"系统版本不支持TouchID/FaceID (必须高于iOS 8.0才能使用)");
+//            NSLog(@"系统版本不支持TouchID/FaceID (必须高于iOS 8.0才能使用)");
             block(YZAuthIDStateVersionNotSupport, nil);
         });
-        
         return;
     }
-    
     LAContext *context = [[LAContext alloc] init];
-    
     // 认证失败提示信息，为 @"" 则不提示
     context.localizedFallbackTitle = @"输入密码";
-    
     NSError *error = nil;
-    
+    BOOL canEvaluatePolicy = [context canEvaluatePolicy: LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&error];
+    if(!describe) {
+        if (!canEvaluatePolicy) {
+            describe = @"验证已录入锁屏密码";
+        }else{
+            if(isPhoneX){
+                describe = @"验证已有面容";
+            }else{
+                describe = @"通过Home键验证指纹";
+            }
+        }
+    }
     // LAPolicyDeviceOwnerAuthenticationWithBiometrics: 用TouchID/FaceID验证
     // LAPolicyDeviceOwnerAuthentication: 用TouchID/FaceID或密码验证, 默认是错误两次或锁定后, 弹出输入密码界面（本案例使用）
-    if ([context canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication error:&error]) {
-        [context evaluatePolicy:LAPolicyDeviceOwnerAuthentication localizedReason:describe reply:^(BOOL success, NSError * _Nullable error) {
-            
+    if ([context canEvaluatePolicy: LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&error]) {
+        [context evaluatePolicy: LAPolicyDeviceOwnerAuthenticationWithBiometrics localizedReason:describe reply:^(BOOL success, NSError * _Nullable error) {
             if (success) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     NSLog(@"TouchID/FaceID 验证成功");
                     block(YZAuthIDStateSuccess, error);
                 });
             }else if(error){
-                
                 if (@available(iOS 11.0, *)) {
                     switch (error.code) {
                         case LAErrorAuthenticationFailed:{
@@ -178,7 +183,7 @@
                             });
                         }
                             break;
-                        case LAErrorBiometryNotEnrolled:{
+                        case LAErrorTouchIDNotEnrolled:{
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 NSLog(@"TouchID 无法启动,因为用户没有设置TouchID");
                                 block(YZAuthIDStateTouchIDNotSet, error);
@@ -186,14 +191,14 @@
                         }
                             break;
                             //case :{
-                        case LAErrorBiometryNotAvailable:{
+                        case LAErrorTouchIDNotAvailable:{
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 NSLog(@"TouchID 无效");
                                 block(YZAuthIDStateTouchIDNotAvailable, error);
                             });
                         }
                             break;
-                        case LAErrorBiometryLockout:{
+                        case LAErrorTouchIDLockout:{
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 NSLog(@"TouchID 被锁定(连续多次验证TouchID失败,系统需要用户手动输入密码)");
                                 block(YZAuthIDStateTouchIDLockout, error);
@@ -223,7 +228,6 @@
         }];
         
     }else{
-        
         dispatch_async(dispatch_get_main_queue(), ^{
             NSLog(@"当前设备不支持TouchID/FaceID");
             block(YZAuthIDStateNotSupport, error);
